@@ -41,9 +41,23 @@ jobs:
           find module tools -name '*.sh' -exec sed -i 's/\r$//' {} \; 2>/dev/null || true
           chmod +x gradlew
           echo "shebang: $(head -1 gradlew | od -c | head -1)"
-          echo "CRLF left: $(grep -c $'\r' gradlew || true)"
 
-      - name: Build release
+      - name: Generate keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore "$GITHUB_WORKSPACE/port.keystore" \
+            -alias musepk \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass musepass -keypass musepass \
+            -dname "CN=Muse PKC110, OU=port, O=local, L=CN, ST=CN, C=CN"
+          ls -lh port.keystore
+
+      - name: Build release (signed)
+        env:
+          OMNICAM_KEYSTORE: port.keystore
+          OMNICAM_STORE_PASSWORD: musepass
+          OMNICAM_KEY_ALIAS: musepk
+          OMNICAM_KEY_PASSWORD: musepass
         run: |
           set -o pipefail
           ./gradlew :app:assembleRelease --console=plain --no-daemon --stacktrace 2>&1 | tee /tmp/build.log | tail -150
@@ -51,21 +65,31 @@ jobs:
       - name: Show failure summary
         if: failure()
         run: |
-          echo "===== last 200 lines ====="
           tail -200 /tmp/build.log || true
-          echo "===== errors ====="
           grep -E "error:|FAILURE|What went wrong|Caused by|Could not|Cannot" /tmp/build.log | head -60 || true
 
-      - name: Locate APK
+      - name: Locate and verify APK
         if: always()
         run: |
           find app/build/outputs -name "*.apk" 2>/dev/null || true
           ls -lh app/build/outputs/apk/release/ 2>/dev/null || true
+          APK=$(find app/build/outputs/apk/release -name "*.apk" 2>/dev/null | head -1)
+          if [ -n "$APK" ]; then
+            echo "=== signature ==="
+            BT=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | tail -1)
+            "$BT/apksigner" verify --print-certs "$APK" 2>&1 | head -10 || \
+              python3 -c "
+import zipfile
+z=zipfile.ZipFile('$APK')
+print('entries',len(z.namelist()))
+print('v2/v3 signing blockpatched:', any('META-INF' in n for n in z.namelist()))
+"
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: muse-apk
+          name: muse-apk-signed
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 30
