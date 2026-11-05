@@ -52,15 +52,21 @@ jobs:
             -dname "CN=Muse PKC110, OU=port, O=local, L=CN, ST=CN, C=CN"
           ls -lh port.keystore
 
-      - name: Build release (signed)
-        env:
-          OMNICAM_KEYSTORE: port.keystore
-          OMNICAM_STORE_PASSWORD: musepass
-          OMNICAM_KEY_ALIAS: musepk
-          OMNICAM_KEY_PASSWORD: musepass
+      - name: Build release
         run: |
           set -o pipefail
           ./gradlew :app:assembleRelease --console=plain --no-daemon --stacktrace 2>&1 | tee /tmp/build.log | tail -150
+
+      - name: Sign APK with apksigner
+        run: |
+          set -e
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | tail -1)
+          echo "build-tools: $BT"
+          APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          echo "unsigned apk: $APK"
+          "$BT/apksigner" sign             --ks "$GITHUB_WORKSPACE/port.keystore"             --ks-pass pass:musepass             --key-pass pass:musepass             --ks-key-alias musepk             --v1-signing-enabled true             --v2-signing-enabled true             --v3-signing-enabled true             "$APK"
+          echo "=== verify ==="
+          "$BT/apksigner" verify --verbose --print-certs "$APK" 2>&1 | head -25
 
       - name: Show failure summary
         if: failure()
