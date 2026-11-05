@@ -75,15 +75,9 @@ jobs:
           ls -lh app/build/outputs/apk/release/ 2>/dev/null || true
           APK=$(find app/build/outputs/apk/release -name "*.apk" 2>/dev/null | head -1)
           if [ -n "$APK" ]; then
-            echo "=== signature ==="
+            echo "=== signature check ==="
             BT=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | tail -1)
-            "$BT/apksigner" verify --print-certs "$APK" 2>&1 | head -10 || \
-              python3 -c "
-import zipfile
-z=zipfile.ZipFile('$APK')
-print('entries',len(z.namelist()))
-print('v2/v3 signing blockpatched:', any('META-INF' in n for n in z.namelist()))
-"
+            "$BT/apksigner" verify --print-certs "$APK" 2>&1 | head -10 || echo "apksigner not found"
           fi
 
       - name: Upload APK
