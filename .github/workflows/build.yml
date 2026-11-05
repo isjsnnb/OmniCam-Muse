@@ -22,51 +22,50 @@ jobs:
       - name: Show runner SDK
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          ls "$ANDROID_HOME" 2>/dev/null || true
           ls "$ANDROID_HOME/platforms" 2>/dev/null || true
-          ls "$ANDROID_HOME/build-tools" 2>/dev/null || true
           ls "$ANDROID_HOME/ndk" 2>/dev/null || true
-          which sdkmanager || ls "$ANDROID_HOME/cmdline-tools" 2>/dev/null || true
+          ls "$ANDROID_HOME/build-tools" 2>/dev/null || true
 
       - name: Install missing SDK packages
         run: |
-          set -e
           SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           SM=$(find "$SDK" -name sdkmanager -type f 2>/dev/null | head -1)
-          echo "sdkmanager: $SM"
-          if [ -z "$SM" ]; then
-            cd /tmp
-            curl -sSLo cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-            unzip -q cmdtools.zip -d /tmp/cmdline-tools
-            mkdir -p "$SDK/cmdline-tools"
-            mv /tmp/cmdline-tools/cmdline-tools "$SDK/cmdline-tools/latest" || true
-            SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
-          fi
           yes | "$SM" --licenses > /dev/null 2>&1 || true
           "$SM" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "cmake;3.22.1" "ndk;29.0.14206865" || true
-          echo "--- after ---"
-          ls "$SDK/platforms" || true
-          ls "$SDK/ndk" || true
+          echo "--- platforms ---"; ls "$SDK/platforms" || true
+          echo "--- ndk ---"; ls "$SDK/ndk" || true
 
-      - name: Grant gradlew
-        run: chmod +x ./gradlew
+      - name: Fix CRLF line endings
+        run: |
+          sed -i 's/\r$//' gradlew
+          find module tools -name '*.sh' -exec sed -i 's/\r$//' {} \; 2>/dev/null || true
+          chmod +x gradlew
+          echo "shebang: $(head -1 gradlew | od -c | head -1)"
+          echo "CRLF left: $(grep -c $'\r' gradlew || true)"
 
       - name: Build release
         run: |
-          ./gradlew :app:assembleRelease --console=plain --no-daemon --stacktrace 2>&1 | tail -120
+          set -o pipefail
+          ./gradlew :app:assembleRelease --console=plain --no-daemon --stacktrace 2>&1 | tee /tmp/build.log | tail -150
+
+      - name: Show failure summary
+        if: failure()
+        run: |
+          echo "===== last 200 lines ====="
+          tail -200 /tmp/build.log || true
+          echo "===== errors ====="
+          grep -E "error:|FAILURE|What went wrong|Caused by|Could not|Cannot" /tmp/build.log | head -60 || true
 
       - name: Locate APK
         if: always()
         run: |
-          find app/build/outputs -name "*.apk" 2>/dev/null | head -20 || true
+          find app/build/outputs -name "*.apk" 2>/dev/null || true
           ls -lh app/build/outputs/apk/release/ 2>/dev/null || true
 
       - name: Upload APK
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: muse-apk
           path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
